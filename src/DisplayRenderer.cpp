@@ -19,30 +19,27 @@ namespace DisplayRenderer {
 
   // ---------- Layout ----------
   //
-  // Rebuilt to read like a dedicated bar-mount nav puck (Beeline Moto and friends)
-  // rather than a phone screen shrunk down: one hero element (the road ahead, drawn
-  // pale and monochrome instead of map-blue) and one big glanceable readout (turn
-  // icon + distance) anchored low, where a rider's eyes actually flick to. Street
-  // name and trip stats are still here but pushed to slim, quiet strips so they never
-  // compete with the two things that matter mid-ride.
+  // Deliberately minimal per spec: the route ribbon on top (as large as the panel
+  // allows), and below it just the turn icon beside the distance to that turn.
+  // Nothing else - no street name, no trip stats, no dial arc - so the two things a
+  // rider actually needs mid-ride get all the space instead of sharing it with
+  // secondary readouts.
   //
   //   +----------------------------------------+
   //   |               .                        |
-  //   |              /                         |  route ribbon (the hero), full width
-  //   |             A                          |
-  //   |         Lalbaug Gate Rd                |  street, small + dim, hugs the panel
+  //   |              /                         |
+  //   |             A                          |  route ribbon (the hero), big
+  //   |            /                           |
   //   +----------------------------------------+
   //   |   ^                                    |
-  //   |  /_\      300 m          0 km/h·0 min  |  turn icon + big number + slim stats
-  //   |  ‾‾‾                                   |  soft arc underline, dial-like
+  //   |  /_\        300 m                      |  turn icon beside the distance
   //   +----------------------------------------+
   static const int SCREEN_W = 160;
   static const int SCREEN_H = 128;
 
-  static const int ROUTE_TOP    = 4;
-  static const int ROUTE_BOTTOM = 74;
-  static const int STREET_Y     = 76;
-  static const int PANEL_TOP    = 90;
+  static const int ROUTE_TOP    = 3;
+  static const int ROUTE_BOTTOM = 90;
+  static const int PANEL_TOP    = 94;
 
   // Where the bike sits inside the map area, as a fraction of its height.
   //
@@ -51,16 +48,14 @@ namespace DisplayRenderer {
   // which is what made the old screen look lopsided. Anchoring the bike instead puts it
   // on the horizontal centre line every frame, with the road running up from it the way
   // a map app does.
-  static const float BIKE_ANCHOR_FRAC = 0.86f;
+  static const float BIKE_ANCHOR_FRAC = 0.88f;
 
-  // Turn icon + number, sized and placed like a watch face: icon left, number
-  // centred in the space that remains so it reads as one glanceable unit rather
-  // than two separate labels.
-  static const int ICON_CX = 30;
-  static const int ICON_CY = 104;
-  static const int ICON_R  = 19;
-  static const int NUM_CX  = 100;
-  static const int NUM_CY  = 100;
+  // Turn icon + distance, centred as a pair in the strip below the route.
+  static const int ICON_CX = 32;
+  static const int ICON_CY = 111;
+  static const int ICON_R  = 16;
+  static const int NUM_CX  = 104;
+  static const int NUM_CY  = 111;
 
   // ---------- Palette (RGB565) ----------
   static const uint16_t C_BG      = 0x0000;
@@ -68,8 +63,6 @@ namespace DisplayRenderer {
   static const uint16_t C_ACCENT  = 0x07E8; // green - brand colour, used for the turn
   static const uint16_t C_ROUTE   = 0xDEDB; // pale, near-white - a dial line, not a map layer
   static const uint16_t C_CASING  = 0x3186; // soft grey halo, just enough to lift it off black
-  static const uint16_t C_ROAD    = 0x2965; // neighbouring roads, kept quiet
-  static const uint16_t C_ROADCAS = 0x18E3; // their casing, so they read as roads not lines
   static const uint16_t C_TEXT    = 0xFFFF;
   static const uint16_t C_DIM     = 0x8410;
   static const uint16_t C_WARN    = 0xFD20;
@@ -102,8 +95,8 @@ namespace DisplayRenderer {
   }
 
   // ---------- Formatting ----------
-  // Deliberately identical to formatDistance()/formatDuration() in the Android app; if
-  // the two disagree the rider sees one number on the phone and another on the bars.
+  // Deliberately identical to formatDistance() in the Android app; if the two
+  // disagree the rider sees one number on the phone and another on the bars.
 
   static void formatDistance(uint32_t metres, char* out, size_t outLen) {
     if (metres < 1000) {
@@ -116,12 +109,6 @@ namespace DisplayRenderer {
     } else {
       snprintf(out, outLen, "%lu km", (unsigned long)(metres / 1000));
     }
-  }
-
-  static void formatDuration(uint16_t seconds, char* out, size_t outLen) {
-    uint16_t minutes = (seconds + 30) / 60;
-    if (minutes < 60) snprintf(out, outLen, "%u min", minutes);
-    else              snprintf(out, outLen, "%uh%02u", minutes / 60, minutes % 60);
   }
 
   // ---------- Primitives ----------
@@ -239,68 +226,10 @@ namespace DisplayRenderer {
     }
   }
 
-  // ---------- Landmarks ----------
-
-  /** Tiny glyphs for the places sent alongside the route. Kept to ~7px so they read
-      as map pins rather than competing with the road itself. */
-  static void drawLandmark(int x, int y, uint8_t type, uint16_t colour) {
-    switch (type) {
-      case LANDMARK_FUEL:     // droplet
-        g->fillTriangle(x, y - 5, x - 3, y + 1, x + 3, y + 1, colour);
-        g->fillCircle(x, y + 1, 3, colour);
-        break;
-      case LANDMARK_FOOD:     // fork + plate
-        g->drawFastVLine(x - 2, y - 4, 8, colour);
-        g->drawFastVLine(x + 2, y - 4, 8, colour);
-        g->drawFastHLine(x - 2, y, 5, colour);
-        break;
-      case LANDMARK_HOSPITAL: // cross
-        g->fillRect(x - 1, y - 5, 3, 10, colour);
-        g->fillRect(x - 5, y - 1, 10, 3, colour);
-        break;
-      case LANDMARK_ATM:      // banknote
-        g->drawRect(x - 5, y - 3, 10, 6, colour);
-        g->fillCircle(x, y, 1, colour);
-        break;
-      case LANDMARK_JUNCTION: // hollow diamond
-        g->drawLine(x, y - 4, x + 4, y, colour);
-        g->drawLine(x + 4, y, x, y + 4, colour);
-        g->drawLine(x, y + 4, x - 4, y, colour);
-        g->drawLine(x - 4, y, x, y - 4, colour);
-        break;
-      default:                // generic place pin
-        g->drawCircle(x, y - 2, 3, colour);
-        g->drawFastVLine(x, y + 1, 4, colour);
-        break;
-    }
-  }
-
   // ---------- The route ribbon ----------
 
   /** One projected point, in sprite pixels. */
   struct PPoint { int x; int y; };
-
-  /**
-   * A small filled chevron pointing along (dx, dy).
-   *
-   * Map apps put these on the route line and they do real work: on a 160px screen a
-   * bare stroke tells you the road bends but not which end of it you are at. Animating
-   * them forward makes the direction of travel readable without a single word.
-   */
-  static void drawChevron(int x, int y, float dx, float dy, int size, uint16_t colour) {
-    float len = sqrtf(dx * dx + dy * dy);
-    if (len < 0.01f) return;
-    dx /= len; dy /= len;
-    float nx = -dy, ny = dx;               // perpendicular, for the two tails
-    int tipX = x + (int)lroundf(dx * size);
-    int tipY = y + (int)lroundf(dy * size);
-    int aX = x + (int)lroundf(nx * size - dx * size * 0.4f);
-    int aY = y + (int)lroundf(ny * size - dy * size * 0.4f);
-    int bX = x - (int)lroundf(nx * size + dx * size * 0.4f);
-    int bY = y - (int)lroundf(ny * size + dy * size * 0.4f);
-    g->fillTriangle(tipX, tipY, aX, aY, x, y, colour);
-    g->fillTriangle(tipX, tipY, bX, bY, x, y, colour);
-  }
 
   /** Eased zoom, so a reroute or a new slice glides instead of snapping. */
   static float shownScale = 0.0f;
@@ -308,17 +237,13 @@ namespace DisplayRenderer {
   /**
    * The road ahead, heading-up, drawn as a map rather than a lone line.
    *
-   * Three things changed here after seeing it on the bars:
+   * The bike is *anchored*, not fitted. The old bounding-box fit centred the
+   * geometry, which meant the bike itself drifted around the frame whenever the road
+   * bent. Now the bike is always on the horizontal centre line and the scale is
+   * chosen so the geometry fits around it.
    *
-   *  - The bike is *anchored*, not fitted. The old bounding-box fit centred the
-   *    geometry, which meant the bike itself drifted around the frame whenever the road
-   *    bent. Now the bike is always on the horizontal centre line and the scale is
-   *    chosen so the geometry fits around it.
-   *  - Neighbouring roads are drawn underneath in grey. A route line alone in black
-   *    gives no sense of place; the side roads are what make a junction look like a
-   *    junction.
-   *  - The route is a cased ribbon with travelling chevrons on it, the way every map
-   *    app draws one, instead of a flat stroke.
+   * Deliberately just the route line, the turn marker, and the bike - no neighbouring
+   * roads and no landmark glyphs, so nothing beside the route competes with it.
    */
   static void drawRoute(const NavState& s) {
     const int x0 = 3, x1 = SCREEN_W - 4;
@@ -329,7 +254,7 @@ namespace DisplayRenderer {
     const int ax = (x0 + x1) / 2;
     const int ay = y0 + (int)((y1 - y0) * BIKE_ANCHOR_FRAC);
 
-    // How far the geometry reaches in each direction from the bike, in metres. Starts
+    // How far the route reaches in each direction from the bike, in metres. Starts
     // at 1 so a route that never goes (say) left simply places no constraint there
     // rather than dividing by zero.
     float maxR = 1, maxL = 1, maxU = 1, maxD = 1;
@@ -341,15 +266,6 @@ namespace DisplayRenderer {
     };
 
     for (int i = 0; i < s.numPoints; i++) consider(s.route[i].x, s.route[i].y);
-    for (int i = 0; i < s.numBranches; i++) {
-      const Branch& b = s.branches[i];
-      float a = b.headingDeg * DEG_TO_RAD;
-      consider(b.x, b.y);
-      consider(b.x + sinf(a) * b.lengthM, b.y + cosf(a) * b.lengthM);
-    }
-    // Landmarks deliberately do NOT drive the fit. A petrol station 200 m off the road
-    // would zoom the whole map out to include it; instead they are simply clipped away
-    // if they fall outside, which costs nothing that matters.
 
     const float pad = 5.0f;
     float scale = fminf(
@@ -367,25 +283,13 @@ namespace DisplayRenderer {
     auto px = [&](float mx) { return (int)lroundf(ax + mx * k); };
     auto py = [&](float my) { return (int)lroundf(ay - my * k); };
 
-    // --- neighbouring roads, underneath everything ---
-    // Kept faint - they're context for the junction, not something to compete with
-    // the route line for attention.
-    for (int i = 0; i < s.numBranches; i++) {
-      const Branch& b = s.branches[i];
-      float a = b.headingDeg * DEG_TO_RAD;
-      int sx = px(b.x), sy = py(b.y);
-      int ex = px(b.x + sinf(a) * b.lengthM), ey = py(b.y + cosf(a) * b.lengthM);
-      ribbonSegment(sx, sy, ex, ey, 1, C_ROAD);
-    }
-
     // --- project the route once, then reuse it ---
     PPoint pts[MAX_ROUTE_POINTS];
     int n = s.numPoints;
     for (int i = 0; i < n; i++) pts[i] = { px(s.route[i].x), py(s.route[i].y) };
 
     // A slim pale line with a barely-there halo, closer to a watch-face dial marking
-    // than a map layer. The halo is what keeps it legible over the grey side roads
-    // without needing a heavy casing.
+    // than a map layer.
     for (int pass = 0; pass < 2; pass++) {
       int halfWidth = (pass == 0) ? 2 : 1;
       uint16_t colour = (pass == 0) ? C_CASING : C_ROUTE;
@@ -394,37 +298,6 @@ namespace DisplayRenderer {
         g->fillCircle(pts[i].x, pts[i].y, halfWidth, colour); // round the joint
       }
       g->fillCircle(pts[0].x, pts[0].y, halfWidth, colour);
-    }
-
-    // --- chevrons marching along the ribbon ---
-    // Dim rather than full white now that the line itself is pale - they should read
-    // as motion on the line, not as a second, brighter line of their own.
-    {
-      const float SPACING = 24.0f;                       // pixels between chevrons
-      float phase = fmodf(frame * 0.5f, SPACING);         // animates them forward
-      float nextAt = phase;
-      float walked = 0.0f;
-      for (int i = 1; i < n; i++) {
-        float dx = (float)(pts[i].x - pts[i - 1].x);
-        float dy = (float)(pts[i].y - pts[i - 1].y);
-        float seg = sqrtf(dx * dx + dy * dy);
-        if (seg < 0.5f) continue;
-        while (nextAt <= walked + seg) {
-          float t = (nextAt - walked) / seg;
-          drawChevron((int)lroundf(pts[i - 1].x + dx * t),
-                      (int)lroundf(pts[i - 1].y + dy * t),
-                      dx, dy, 2, C_BG);
-          nextAt += SPACING;
-        }
-        walked += seg;
-      }
-    }
-
-    // --- landmarks, dim so they give context without competing with the road ---
-    for (int i = 0; i < s.numLandmarks; i++) {
-      int lx = px(s.landmarks[i].x), ly = py(s.landmarks[i].y);
-      if (lx < x0 + 4 || lx > x1 - 4 || ly < y0 + 5 || ly > y1 - 5) continue;
-      drawLandmark(lx, ly, s.landmarks[i].type, C_DIM);
     }
 
     // --- where the turn actually happens ---
@@ -464,26 +337,10 @@ namespace DisplayRenderer {
 
   // ---------- Screen sections ----------
 
-  /** Street name, small and dim, hugging the bottom of the route panel. Lives here
-      rather than up top so the eye meets road -> street -> turn in one downward
-      sweep instead of bouncing between a header and a map. */
-  static void drawStreetName(const NavState& s) {
-    if (s.streetName[0] == '\0') return;
-    g->setFont(&fonts::Font2);
-    g->setTextDatum(TC_DATUM);
-    g->setTextColor(C_DIM, C_BG);
-    char name[MAX_STREET_NAME + 1];
-    strncpy(name, s.streetName, sizeof(name));
-    name[sizeof(name) - 1] = '\0';
-    int available = SCREEN_W - 8;
-    while (name[0] != '\0' && g->textWidth(name) > available) name[strlen(name) - 1] = '\0';
-    g->drawString(name, SCREEN_W / 2, STREET_Y);
-  }
-
   /**
-   * The turn panel: icon on the left, one big number in the middle, a soft arc
-   * beneath it. This is the one thing a rider needs at a glance, so it's the
-   * biggest text on the screen - everything else is deliberately smaller than it.
+   * The turn panel: icon on the left, the distance to that turn beside it.
+   * Nothing else - no arc, no trip stats - so it's the biggest, simplest thing on
+   * the screen after the route itself.
    */
   static void drawTurnPanel(const NavState& s, uint16_t accent) {
     g->drawFastHLine(6, PANEL_TOP, SCREEN_W - 12, C_OUTLINE);
@@ -497,26 +354,6 @@ namespace DisplayRenderer {
     g->setFont(&fonts::Font4);
     g->setTextColor(accent, C_BG);
     g->drawString(buf, NUM_CX, NUM_CY);
-
-    // A shallow arc under the number - a quiet nod to a dial face rather than a
-    // literal progress bar, since there's no single "percent done" to show here.
-    int archalf = 30;
-    for (int dx = -archalf; dx <= archalf; dx++) {
-      int dy = (int)lroundf((dx * dx) / (float)(archalf * 2));
-      g->drawPixel(NUM_CX + dx, NUM_CY + 15 + dy, C_OUTLINE);
-    }
-
-    // Trip stats: one quiet line, right where the arc trails off, instead of a
-    // separate footer bar competing for space.
-    char speed[12], eta[12];
-    snprintf(speed, sizeof(speed), "%u km/h", (unsigned)((s.speedKmhX10 + 5) / 10));
-    formatDuration(s.etaSeconds, eta, sizeof(eta));
-    char stats[24];
-    snprintf(stats, sizeof(stats), "%s  \xB7  %s", speed, eta);
-    g->setFont(&fonts::Font0);
-    g->setTextDatum(BC_DATUM);
-    g->setTextColor(C_DIM, C_BG);
-    g->drawString(stats, NUM_CX, SCREEN_H - 2);
   }
 
   static void drawBanner(const char* text, uint16_t colour) {
@@ -713,7 +550,6 @@ namespace DisplayRenderer {
       }
 
       drawRoute(s);
-      drawStreetName(s);
       drawTurnPanel(s, accent);
 
       if (s.rerouting || s.offRoute) drawBanner("Off route - rerouting", C_WARN);

@@ -8,10 +8,10 @@
         {
             "name": "PlatformIO",
             "includePath": [
-                "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32C3_BikeNav_RouteAhead_API/include",
-                "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32C3_BikeNav_RouteAhead_API/src",
-                "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32C3_BikeNav_RouteAhead_API/.pio/libdeps/esp32-c3-devkitm-1/NimBLE-Arduino/src",
-                "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32C3_BikeNav_RouteAhead_API/.pio/libdeps/esp32-c3-devkitm-1/LovyanGFX/src",
+                "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32_BikeNav_RouteAhead_Google/include",
+                "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32_BikeNav_RouteAhead_Google/src",
+                "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32_BikeNav_RouteAhead_Google/.pio/libdeps/esp32-c3-devkitm-1/NimBLE-Arduino/src",
+                "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32_BikeNav_RouteAhead_Google/.pio/libdeps/esp32-c3-devkitm-1/LovyanGFX/src",
                 "C:/Users/mynam/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
                 "C:/Users/mynam/.platformio/packages/framework-arduinoespressif32/libraries/SPI/src",
                 "C:/Users/mynam/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/newlib/platform_include",
@@ -243,10 +243,10 @@
             "browse": {
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
-                    "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32C3_BikeNav_RouteAhead_API/include",
-                    "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32C3_BikeNav_RouteAhead_API/src",
-                    "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32C3_BikeNav_RouteAhead_API/.pio/libdeps/esp32-c3-devkitm-1/NimBLE-Arduino/src",
-                    "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32C3_BikeNav_RouteAhead_API/.pio/libdeps/esp32-c3-devkitm-1/LovyanGFX/src",
+                    "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32_BikeNav_RouteAhead_Google/include",
+                    "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32_BikeNav_RouteAhead_Google/src",
+                    "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32_BikeNav_RouteAhead_Google/.pio/libdeps/esp32-c3-devkitm-1/NimBLE-Arduino/src",
+                    "C:/Users/mynam/OneDrive/Documents/PlatformIO/Projects/ESP32_BikeNav_RouteAhead_Google/.pio/libdeps/esp32-c3-devkitm-1/LovyanGFX/src",
                     "C:/Users/mynam/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
                     "C:/Users/mynam/.platformio/packages/framework-arduinoespressif32/libraries/SPI/src",
                     "C:/Users/mynam/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/newlib/platform_include",
