@@ -37,13 +37,16 @@ namespace BleManager {
   //   5-6    uint16 speed, 0.1 km/h units
   //   7-8    uint16 ETA, seconds
   //   9-10   uint16 remaining distance, decametres
-  //   11     numPoints
-  //   12..   numPoints * { int16 x cm, int16 y cm }
+  //   11     uint8 roundabout exit number (0 = none)             [v5]
+  //   12     int8 turn angle / 2 deg, +right (-128 = unknown)    [v5]
+  //   13     uint8 roundabout ring length / 2 m (0 = none)       [v6]
+  //   14     numPoints
+  //   15..   numPoints * { int16 x cm, int16 y cm }
   //   then   uint8 numLandmarks, then numLandmarks * { int16 x cm, int16 y cm, uint8 type }
   //   then   uint8 numBranches,  then numBranches  * { int16 x cm, int16 y cm,
   //                                                    uint8 heading/2 deg, uint8 length/2 m }
   //   then   uint8 street name length, then that many UTF-8 bytes
-  static const size_t HEADER_LEN = 12;
+  static const size_t HEADER_LEN = 15;
 
   static bool parsePacket(const uint8_t* data, size_t length) {
     if (length < HEADER_LEN) return false;       // too short to be a frame at all
@@ -55,7 +58,10 @@ namespace BleManager {
     uint16_t speed    = (uint16_t)data[5] | ((uint16_t)data[6] << 8);
     uint16_t eta      = (uint16_t)data[7] | ((uint16_t)data[8] << 8);
     uint16_t remDam   = (uint16_t)data[9] | ((uint16_t)data[10] << 8);
-    uint8_t numPoints = data[11];
+    uint8_t exitNo    = data[11];
+    int8_t angleHalf  = (int8_t)data[12];
+    uint8_t ringHalf  = data[13];
+    uint8_t numPoints = data[14];
 
     if (maneuver >= MANEUVER_COUNT) maneuver = MANEUVER_STRAIGHT;
     if (numPoints > MAX_ROUTE_POINTS) numPoints = MAX_ROUTE_POINTS;
@@ -88,6 +94,10 @@ namespace BleManager {
 
     navState.maneuver          = (ManeuverType)maneuver;
     navState.distanceToTurnM   = distance;
+    navState.roundaboutExit    = exitNo;
+    navState.hasTurnAngle      = (angleHalf != -128);
+    navState.turnAngleDeg      = navState.hasTurnAngle ? (int16_t)angleHalf * 2 : 0;
+    navState.roundaboutRingM   = (uint16_t)ringHalf * 2;
     navState.speedKmhX10       = speed;
     navState.etaSeconds        = eta;
     navState.remainingDistanceM = (uint32_t)remDam * 10;
@@ -202,7 +212,7 @@ namespace BleManager {
       NimBLEDevice::startAdvertising(); // resume advertising so the app can reconnect
     }
 
-    // Called once the central negotiates a larger MTU. A v4 frame is up to 178 bytes,
+    // Called once the central negotiates a larger MTU. A v6 frame is up to 181 bytes,
     // so this is what makes full frames possible at all - see BleRouteClient.
     void onMTUChange(uint16_t MTU, NimBLEConnInfo& connInfo) override {
       Serial.printf("MTU negotiated: %u bytes\n", MTU);

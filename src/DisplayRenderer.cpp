@@ -1,4 +1,5 @@
 #include "DisplayRenderer.h"
+#include "Battery.h"
 #include <string.h>
 #include <math.h>
 
@@ -66,6 +67,7 @@ namespace DisplayRenderer {
   static const uint16_t C_TEXT    = 0xFFFF;
   static const uint16_t C_DIM     = 0x8410;
   static const uint16_t C_WARN    = 0xFD20;
+  static const uint16_t C_LOW     = 0xF800; // red - battery nearly flat
 
   static const uint32_t STALE_AFTER_MS = 6000;
 
@@ -145,8 +147,16 @@ namespace DisplayRenderer {
     }
   }
 
-  static void drawArrow(ManeuverType type, uint16_t colour) {
-    const int cx = ICON_CX, cy = ICON_CY, r = ICON_R;
+  /**
+   * The turn icon, centred on (cx, cy).
+   *
+   * [turnAngle] is the real angle the road turns through (+right, -left, +/-180 for a
+   * U-turn) when [hasAngle]; it steers the two icons that used to be one fixed picture
+   * whatever the junction looked like - the roundabout exit and the side of a U-turn.
+   */
+  static void drawArrow(ManeuverType type, uint16_t colour, int cx, int cy,
+                        int turnAngle = 0, bool hasAngle = false, uint8_t exitNo = 0) {
+    const int r = ICON_R;
 
     switch (type) {
       case MANEUVER_STRAIGHT:
@@ -182,21 +192,58 @@ namespace DisplayRenderer {
         arrowHead(cx + 8, cy - 12, 40, 9, 8, colour);
         break;
 
-      case MANEUVER_UTURN:
-        thickLine(cx - 7, cy + r, cx - 7, cy - 3, 4, colour);
-        g->drawCircle(cx - 1, cy - 4, 6, colour);
-        g->drawCircle(cx - 1, cy - 4, 7, colour);
-        thickLine(cx + 6, cy - 4, cx + 6, cy + 3, 4, colour);
-        arrowHead(cx + 6, cy + r - 3, 180, 9, 8, colour);
+      case MANEUVER_UTURN: {
+        // Up one leg, over a solid half-ring, back down the other with the head
+        // pointing back toward the rider. The old version drew two full circles, which
+        // read as a lollipop rather than a hairpin. Right-hand by default (left-hand
+        // traffic); mirrored when the phone says the U-turn goes left.
+        const int m = (hasAngle && turnAngle < 0) ? -1 : 1;
+        const int legX = 7, topY = cy - 5;
+        // Half-ring as disc minus hole minus lower half: unambiguous on every LovyanGFX
+        // version, unlike fillArc's angle conventions. Nothing else is drawn here yet.
+        g->fillCircle(cx, topY, 9, colour);
+        g->fillCircle(cx, topY, 4, C_BG);
+        g->fillRect(cx - 10, topY + 1, 21, 10, C_BG);
+        thickLine(cx - legX * m, cy + r, cx - legX * m, topY, 5, colour);
+        thickLine(cx + legX * m, topY, cx + legX * m, cy + 5, 5, colour);
+        arrowHead(cx + legX * m, cy + r, 180, 9, 8, colour);
         break;
+      }
 
-      case MANEUVER_ROUNDABOUT:
-        g->drawCircle(cx, cy, 8, colour);
-        g->drawCircle(cx, cy, 9, colour);
-        thickLine(cx, cy + r, cx, cy + 9, 5, colour);
-        thickLine(cx + 6, cy - 6, cx + 11, cy - 11, 4, colour);
-        arrowHead(cx + r - 1, cy - r + 1, 45, 8, 7, colour);
+      case MANEUVER_ROUNDABOUT: {
+        // Ring, entry from below, and the exit leaving at the angle the road really
+        // takes - previously every roundabout showed the same upper-right exit, so a
+        // first-exit left and a third-exit right looked identical. The exit number sits
+        // inside the ring.
+        const int rcy = cy - 1;
+        const int ringOuter = 11, ringInner = 8;
+        float a = (hasAngle ? (float)turnAngle : 45.0f);
+        if (a > 170.0f) a = 170.0f;
+        if (a < -170.0f) a = -170.0f;
+        const float ar = a * DEG_TO_RAD;
+        const float dx = sinf(ar), dy = -cosf(ar);
+
+        uint16_t ring = mix(C_BG, colour, 0.6f);
+        g->fillCircle(cx, rcy, ringOuter, ring);
+        g->fillCircle(cx, rcy, ringInner, C_BG);
+        thickLine(cx, cy + r, cx, rcy + ringOuter - 1, 5, colour);
+
+        // The exit: a short spoke leaving the ring, capped with the arrowhead.
+        thickLine(cx + (int)lroundf(dx * (ringOuter - 2)), rcy + (int)lroundf(dy * (ringOuter - 2)),
+                  cx + (int)lroundf(dx * (ringOuter + 3)), rcy + (int)lroundf(dy * (ringOuter + 3)),
+                  5, colour);
+        arrowHead(cx + (int)lroundf(dx * (ringOuter + 9)), rcy + (int)lroundf(dy * (ringOuter + 9)),
+                  a, 8, 7, colour);
+
+        if (exitNo > 0 && exitNo < 10) {
+          char num[2] = { (char)('0' + exitNo), '\0' };
+          g->setFont(&fonts::Font2);
+          g->setTextDatum(MC_DATUM);
+          g->setTextColor(colour, C_BG);
+          g->drawString(num, cx, rcy + 1);
+        }
         break;
+      }
 
       case MANEUVER_FORK_LEFT:
       case MANEUVER_OFF_RAMP:
@@ -254,23 +301,99 @@ namespace DisplayRenderer {
     const int ax = (x0 + x1) / 2;
     const int ay = y0 + (int)((y1 - y0) * BIKE_ANCHOR_FRAC);
 
-    // How far the route reaches in each direction from the bike, in metres. Starts
-    // at 1 so a route that never goes (say) left simply places no constraint there
-    // rather than dividing by zero.
-    float maxR = 1, maxL = 1, maxU = 1, maxD = 1;
+    const int n = s.numPoints;
+
+    // --- split the route at the maneuver ---
+    // Everything up to the turn is "the road you are on"; everything after it is
+    // context. Finding that split first matters for two things below: the zoom, and
+    // drawing the two halves differently.
+    //
+    // turnSeg/turnT: the turn lies on segment (turnSeg-1 -> turnSeg) at fraction turnT.
+    // turnSeg == 0 means no turn inside the slice (it is further away than the slice
+    // reaches), in which case the whole slice is "the road you are on".
+    // Finds the point [target] metres along the slice. Returns the segment index (0 if the
+    // slice is shorter than that) and writes the point.
+    auto locate = [&](float target, float& ox, float& oy) -> int {
+      float walked = 0;
+      for (int i = 1; i < n; i++) {
+        float dx = s.route[i].x - s.route[i - 1].x;
+        float dy = s.route[i].y - s.route[i - 1].y;
+        float seg = sqrtf(dx * dx + dy * dy);
+        if (seg < 0.01f) continue;
+        if (walked + seg >= target) {
+          float t = (target - walked) / seg;
+          ox = s.route[i - 1].x + dx * t;
+          oy = s.route[i - 1].y + dy * t;
+          return i;
+        }
+        walked += seg;
+      }
+      return 0;
+    };
+
+    // The countdown point (green dot) is where the maneuver starts. The split between
+    // "your road" and "context" is normally the same point - but approaching a
+    // roundabout it is the EXIT. Splitting at the entry used to show the ring as a dim
+    // 35 m stub veering left (traffic goes clockwise), right under an icon saying the
+    // exit was to the right: the map and the arrow seemed to disagree.
+    float entryX = 0.0f, entryY = 0.0f;
+    int entrySeg = (s.distanceToTurnM > 0) ? locate((float)s.distanceToTurnM, entryX, entryY) : 0;
+
+    int turnSeg = entrySeg;
+    float turnX = entryX, turnY = entryY;
+    const bool showRing = entrySeg > 0 && s.maneuver == MANEUVER_ROUNDABOUT && s.roundaboutRingM > 0;
+    if (showRing) {
+      // Exit beyond the end of the slice: the whole slice is "your road".
+      turnSeg = locate((float)(s.distanceToTurnM + s.roundaboutRingM), turnX, turnY);
+    }
+
+    // --- zoom ---
+    // How far the road reaches in each direction from the bike, in metres. Starts at 1
+    // so a direction the road never goes places no constraint rather than dividing by 0.
+    //
+    // Two fixes against the old fit-everything zoom:
+    //  - Only the road up to the turn, plus a short stub past it, drives the zoom. The
+    //    turn is what the rider is looking for; fitting the whole 250 m slice kept a
+    //    junction 40 m ahead as a tiny kink in the middle of the screen.
+    //  - Road BEHIND the bike no longer drives it. The anchor leaves ~10 px below the
+    //    bike, so a U-turn (whose return leg runs back past the bike) or a roundabout
+    //    loop used to force the scale down until the whole map was a dot. That road is
+    //    now simply clipped at the bottom of the map area.
+    float maxR = 1, maxL = 1, maxU = 1;
     auto consider = [&](float x, float y) {
+      if (y < 0) y = 0;
       if (x > maxR) maxR = x;
       if (-x > maxL) maxL = -x;
       if (y > maxU) maxU = y;
-      if (-y > maxD) maxD = -y;
     };
 
-    for (int i = 0; i < s.numPoints; i++) consider(s.route[i].x, s.route[i].y);
+    const float PAST_TURN_M = 35.0f;
+    if (turnSeg > 0) {
+      for (int i = 0; i < turnSeg; i++) consider(s.route[i].x, s.route[i].y);
+      consider(turnX, turnY);
+      // A stub past the turn, so the direction the road leaves in is on screen.
+      float walked = 0, px0 = turnX, py0 = turnY;
+      for (int i = turnSeg; i < n && walked < PAST_TURN_M; i++) {
+        float dx = s.route[i].x - px0, dy = s.route[i].y - py0;
+        float seg = sqrtf(dx * dx + dy * dy);
+        if (seg < 0.01f) continue;
+        if (walked + seg > PAST_TURN_M) {
+          float t = (PAST_TURN_M - walked) / seg;
+          consider(px0 + dx * t, py0 + dy * t);
+          break;
+        }
+        consider(s.route[i].x, s.route[i].y);
+        walked += seg;
+        px0 = s.route[i].x; py0 = s.route[i].y;
+      }
+    } else {
+      for (int i = 0; i < n; i++) consider(s.route[i].x, s.route[i].y);
+    }
 
-    const float pad = 5.0f;
+    const float pad = 6.0f;
     float scale = fminf(
       fminf((x1 - ax - pad) / maxR, (ax - x0 - pad) / maxL),
-      fminf((ay - y0 - pad) / maxU, (y1 - ay - 2.0f) / maxD)
+      (ay - y0 - pad) / maxU
     );
     if (scale > 3.0f) scale = 3.0f;
     if (scale < 0.02f) scale = 0.02f;
@@ -283,47 +406,63 @@ namespace DisplayRenderer {
     auto px = [&](float mx) { return (int)lroundf(ax + mx * k); };
     auto py = [&](float my) { return (int)lroundf(ay - my * k); };
 
-    // --- project the route once, then reuse it ---
-    PPoint pts[MAX_ROUTE_POINTS];
-    int n = s.numPoints;
-    for (int i = 0; i < n; i++) pts[i] = { px(s.route[i].x), py(s.route[i].y) };
+    // Nothing in the map may spill into the turn panel - road clipped by the new zoom
+    // would otherwise be drawn straight over the distance readout.
+    g->setClipRect(0, y0, SCREEN_W, y1 - y0 + 2);
 
-    // A slim pale line with a barely-there halo, closer to a watch-face dial marking
-    // than a map layer.
-    for (int pass = 0; pass < 2; pass++) {
-      int halfWidth = (pass == 0) ? 2 : 1;
-      uint16_t colour = (pass == 0) ? C_CASING : C_ROUTE;
-      for (int i = 1; i < n; i++) {
+    // --- project the route once, with the turn point spliced in ---
+    PPoint pts[MAX_ROUTE_POINTS + 1];
+    int np = 0;
+    int splitAt = n - 1;                      // index in pts[] of the turn point
+    for (int i = 0; i < n; i++) {
+      if (turnSeg > 0 && i == turnSeg) {
+        splitAt = np;
+        pts[np++] = { px(turnX), py(turnY) };
+      }
+      pts[np++] = { px(s.route[i].x), py(s.route[i].y) };
+    }
+
+    auto stroke = [&](int from, int to, int halfWidth, uint16_t colour) {
+      for (int i = from + 1; i <= to; i++) {
         ribbonSegment(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y, halfWidth, colour);
         g->fillCircle(pts[i].x, pts[i].y, halfWidth, colour); // round the joint
       }
-      g->fillCircle(pts[0].x, pts[0].y, halfWidth, colour);
+      g->fillCircle(pts[from].x, pts[from].y, halfWidth, colour);
+    };
+
+    // Road after the turn: thinner and dimmer, drawn first so it sits underneath. On a
+    // U-turn the way back runs right alongside the way out, and round a roundabout the
+    // path crosses its own approach - drawn identically, the two merged into one
+    // unreadable line and the rider could not tell which part was "now".
+    if (splitAt < np - 1) {
+      stroke(splitAt, np - 1, 2, C_OUTLINE);
+      stroke(splitAt, np - 1, 0, C_DIM);
     }
+
+    // Road up to the turn: a slim pale line with a barely-there halo, closer to a
+    // watch-face dial marking than a map layer.
+    stroke(0, splitAt, 2, C_CASING);
+    stroke(0, splitAt, 1, C_ROUTE);
 
     // --- where the turn actually happens ---
     // Without it the rider can see the road bend but not which bend the countdown
     // refers to. It pulses as the turn gets close.
-    if (s.distanceToTurnM > 0) {
-      float target = (float)s.distanceToTurnM, walked = 0;
-      for (int i = 1; i < s.numPoints; i++) {
-        float dx = s.route[i].x - s.route[i - 1].x;
-        float dy = s.route[i].y - s.route[i - 1].y;
-        float seg = sqrtf(dx * dx + dy * dy);
-        if (seg < 0.01f) continue;
-        if (walked + seg >= target) {
-          float t = (target - walked) / seg;
-          int mx = px(s.route[i - 1].x + dx * t);
-          int my = py(s.route[i - 1].y + dy * t);
-          if (pulse > 0.05f) {
-            int halo = 5 + (int)(((sinf(frame / 4.0f) + 1.0f) * 0.5f) * 4.0f * pulse);
-            g->drawCircle(mx, my, halo, mix(C_BG, C_ACCENT, pulse));
-          }
-          g->fillCircle(mx, my, 4, C_BG);
-          g->fillCircle(mx, my, 3, C_ACCENT);
-          break;
-        }
-        walked += seg;
+    // The roundabout's exit: a small white ring where the rider leaves the circle.
+    if (showRing && turnSeg > 0) {
+      int ex = px(turnX), ey = py(turnY);
+      g->fillCircle(ex, ey, 4, C_BG);
+      g->drawCircle(ex, ey, 3, C_TEXT);
+      g->drawCircle(ex, ey, 2, C_TEXT);
+    }
+
+    if (entrySeg > 0) {
+      int mx = px(entryX), my = py(entryY);
+      if (pulse > 0.05f) {
+        int halo = 5 + (int)(((sinf(frame / 4.0f) + 1.0f) * 0.5f) * 4.0f * pulse);
+        g->drawCircle(mx, my, halo, mix(C_BG, C_ACCENT, pulse));
       }
+      g->fillCircle(mx, my, 4, C_BG);
+      g->fillCircle(mx, my, 3, C_ACCENT);
     }
 
     // --- the bike, on the anchor, always pointing up ---
@@ -333,6 +472,8 @@ namespace DisplayRenderer {
     g->fillCircle(bx, by, 8, C_BG);                       // knock a hole in the ribbon
     g->fillTriangle(bx, by - 8, bx + 6, by + 6, bx, by + 2, C_TEXT);
     g->fillTriangle(bx, by - 8, bx - 6, by + 6, bx, by + 2, C_TEXT);
+
+    g->clearClipRect();
   }
 
   // ---------- Screen sections ----------
@@ -345,7 +486,8 @@ namespace DisplayRenderer {
   static void drawTurnPanel(const NavState& s, uint16_t accent) {
     g->drawFastHLine(6, PANEL_TOP, SCREEN_W - 12, C_OUTLINE);
 
-    drawArrow(s.maneuver, accent);
+    drawArrow(s.maneuver, accent, ICON_CX, ICON_CY, s.turnAngleDeg, s.hasTurnAngle,
+              s.roundaboutExit);
 
     char buf[16];
     formatDistance((uint32_t)(shownDistance + 0.5f), buf, sizeof(buf));
@@ -354,6 +496,41 @@ namespace DisplayRenderer {
     g->setFont(&fonts::Font4);
     g->setTextColor(accent, C_BG);
     g->drawString(buf, NUM_CX, NUM_CY);
+  }
+
+  /**
+   * Battery level, top-right: a small cell icon with the percentage beside it.
+   *
+   * Kept dim while there's plenty of charge so it never competes with the route, then
+   * amber at 20% and a blinking red at 10% - by which point a Li-ion cell is minutes
+   * from cutting out, and losing the display mid-ride is worth noticing.
+   */
+  static void drawBattery() {
+    if (!Battery::present()) return;   // on USB with no cell fitted
+    uint8_t pct = Battery::percent();
+
+    uint16_t colour = C_DIM;
+    if (pct <= 10) {
+      if ((millis() / 500) % 2) return;   // blink
+      colour = C_LOW;
+    } else if (pct <= 20) {
+      colour = C_WARN;
+    }
+
+    const int w = 16, h = 8;
+    const int x = SCREEN_W - w - 4, y = 3;
+    g->fillRect(x - 24, y - 1, w + 28, h + 2, C_BG);        // keep the route off it
+    g->drawRect(x, y, w, h, colour);
+    g->fillRect(x + w, y + 2, 2, h - 4, colour);           // the terminal nub
+    int fill = (int)((w - 4) * pct / 100.0f + 0.5f);
+    if (fill > 0) g->fillRect(x + 2, y + 2, fill, h - 4, colour);
+
+    char buf[6];
+    snprintf(buf, sizeof(buf), "%u%%", pct);
+    g->setFont(&fonts::Font0);
+    g->setTextDatum(TR_DATUM);
+    g->setTextColor(colour, C_BG);
+    g->drawString(buf, x - 3, y);
   }
 
   static void drawBanner(const char* text, uint16_t colour) {
@@ -385,23 +562,27 @@ namespace DisplayRenderer {
   }
 
   static void drawArrivedScreen(const NavState& s) {
-    // Rings expanding outward from the pin - a small celebration on arrival.
+    // Rings expanding outward from the pin - a small celebration on arrival. The pin
+    // used to be drawn down in the turn-panel corner with "Arrived" printed over the
+    // middle of the rings; now the pin is the centre of the rings and the text sits
+    // clear below it.
+    const int pinY = 40;
     for (int i = 0; i < 3; i++) {
       float t = fmodf((frame / 30.0f) + i * 0.33f, 1.0f);
-      int radius = (int)(t * 44);
-      g->drawCircle(SCREEN_W / 2, 52, radius, mix(C_ACCENT, C_BG, t));
+      int radius = 10 + (int)(t * 32);
+      g->drawCircle(SCREEN_W / 2, pinY - 4, radius, mix(C_ACCENT, C_BG, t));
     }
-    drawArrow(MANEUVER_ARRIVE, C_ACCENT);
+    drawArrow(MANEUVER_ARRIVE, C_ACCENT, SCREEN_W / 2, pinY);
 
     g->setTextDatum(MC_DATUM);
     g->setFont(&fonts::Font4);
     g->setTextColor(C_ACCENT, C_BG);
-    g->drawString("Arrived", SCREEN_W / 2, 52);
+    g->drawString("Arrived", SCREEN_W / 2, 88);
 
     if (s.streetName[0] != '\0') {
       g->setFont(&fonts::Font2);
       g->setTextColor(C_DIM, C_BG);
-      g->drawString(s.streetName, SCREEN_W / 2, 100);
+      g->drawString(s.streetName, SCREEN_W / 2, 112);
     }
   }
 
@@ -554,6 +735,10 @@ namespace DisplayRenderer {
 
       if (s.rerouting || s.offRoute) drawBanner("Off route - rerouting", C_WARN);
     }
+
+    // The banner spans the top edge, so the battery gives way to it.
+    bool banner = s.connected && !stale && !s.arrived && s.hasRoute && (s.rerouting || s.offRoute);
+    if (!banner) drawBattery();
 
     if (spriteReady) fb.pushSprite(0, 0);
   }

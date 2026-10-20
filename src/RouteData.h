@@ -8,7 +8,7 @@
 // Wire protocol version this firmware speaks. Must match NavPacket.PROTOCOL_VERSION
 // on the Android side. Frames tagged with anything else are dropped rather than
 // guessed at - a misread frame shows the rider a confidently wrong turn.
-#define NAV_PROTOCOL_VERSION 4
+#define NAV_PROTOCOL_VERSION 6
 
 // A single route point in metres, relative to the bike, heading-up rotated.
 // +Y = straight ahead, +X = right of travel. Matches LocalPoint on Android.
@@ -17,8 +17,8 @@ struct RoutePoint {
   float y;
 };
 
-// Must equal NavPacket.MAX_ROUTE_POINTS on the Android side. 24 keeps the drawn
-// route smooth enough to read as a ribbon; the array costs 24 * 8 = 192 bytes.
+// Must equal NavPacket.MAX_ROUTE_POINTS on the Android side. 20 keeps the drawn
+// route smooth enough to read as a ribbon; the array costs 20 * 8 = 160 bytes.
 const int MAX_ROUTE_POINTS = 20;
 const int MAX_STREET_NAME = 22;
 
@@ -104,6 +104,18 @@ struct NavState {
 
   ManeuverType maneuver = MANEUVER_STRAIGHT;
   uint16_t distanceToTurnM = 0;
+
+  // v5. Exit number for a roundabout (0 = none named), and how far the road really
+  // turns at the maneuver: degrees, 0 = ahead, +right, -left, +/-180 = U-turn. This is
+  // what lets the icon point a roundabout at its actual exit and bend a U-turn the
+  // right way, instead of one fixed picture for every case.
+  uint8_t roundaboutExit = 0;
+  int16_t turnAngleDeg = 0;
+  bool hasTurnAngle = false;
+
+  // v6. Approaching a roundabout: metres from the entry (where distanceToTurnM points)
+  // round the ring to the exit. 0 otherwise. Lets the map show the whole ring.
+  uint16_t roundaboutRingM = 0;
   uint16_t speedKmhX10 = 0;
   uint16_t etaSeconds = 0;
   uint32_t remainingDistanceM = 0;

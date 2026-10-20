@@ -2,6 +2,7 @@
 #include "RouteData.h"
 #include "DisplayRenderer.h"
 #include "BleManager.h"
+#include "Battery.h"
 
 // Single shared nav state - declared extern in RouteData.h, written by BleManager
 // from the NimBLE host task, read by DisplayRenderer from loop().
@@ -139,12 +140,26 @@ void setup() {
 
   DisplayRenderer::begin();
   BleManager::begin();
+  Battery::begin();
 
   Serial.println("RouteAhead ready, advertising as BikeNav-RouteAhead");
 }
 
 void loop() {
+  Battery::update();
   DisplayRenderer::render();
+
+  // Battery reading on the serial monitor every 10 s - the quickest way to check the
+  // divider and calibrate BAT_DIVIDER against a multimeter.
+  static uint32_t lastBatLog = 0;
+  if (millis() - lastBatLog > 10000) {
+    lastBatLog = millis();
+    Serial.printf("Battery: %u mV (%u%%) | pin %u mV, raw %u/4095%s\n",
+                  Battery::millivolts(), Battery::percent(),
+                  Battery::pinMillivolts(), Battery::raw(),
+                  Battery::wiringFault() ? " - TOO HIGH: check the divider wiring"
+                  : (Battery::present() ? "" : " - no battery detected"));
+  }
   delay(100); // ~10 fps; BLE writes update navState asynchronously in the background
 }
 

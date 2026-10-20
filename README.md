@@ -34,6 +34,27 @@ was resetting the display several times a second while believing it was setting
 brightness. The `#if TFT_BL >= 0` guard around the PWM block is what makes `-1` mean "no
 backlight control" rather than "drive pin −1".
 
+### Battery sense
+
+Single-cell 3.7 V Li-ion through a divider: `OUT+ -> 100k -> GPIO0 -> 100k -> GND`, with
+an optional 0.1 µF cap from GPIO0 to GND (in parallel with the bottom resistor, not in
+series - in series it blocks DC and the pin reads the full battery voltage). GPIO0 is on
+ADC1, so it keeps working with BLE on.
+
+`Battery.cpp` averages 16 samples every 2 s, smooths over ~20 s, and maps volts to
+percent along a Li-ion discharge curve. The on-screen number only moves once the real
+value is more than 2 points away, so ADC noise can't make it flicker. Pin and ratio are
+`BAT_ADC_PIN` / `BAT_DIVIDER` in `platformio.ini`; the serial log prints the reading
+every 10 s for calibrating against a multimeter. A reading above ~2.6 V at the pin is
+treated as a wiring fault and the icon is hidden.
+
+While charging, the percentage reads high (charge current lifts the terminal voltage),
+so it is only accurate at rest or on discharge.
+
+**Caution:** the SuperMini ties USB 5 V straight to its 5V pin. With SW1 on and USB
+plugged in, 5 V is pushed back onto OUT+ and the battery. Keep SW1 off while on USB,
+or fit a Schottky diode (anode OUT+, cathode 5V pin).
+
 ### Why LovyanGFX and not TFT_eSPI
 
 TFT_eSPI crashes on boot on the C3. It defines `SPI_PORT` as `SPI2_HOST` (== 1), but this
@@ -150,22 +171,25 @@ contract. **Change one and you must change the other.**
 
 | Bytes | Meaning |
 |-------|---------|
-| 0     | protocol version (`NAV_PROTOCOL_VERSION`, currently 4) |
+| 0     | protocol version (`NAV_PROTOCOL_VERSION`, currently 6) |
 | 1     | flags: bit0 hasRoute, bit1 offRoute, bit2 arrived, bit3 rerouting |
 | 2     | maneuver ordinal (`ManeuverType`) |
 | 3–4   | uint16 distance to the maneuver, metres |
 | 5–6   | uint16 speed, 0.1 km/h units |
 | 7–8   | uint16 ETA, seconds |
 | 9–10  | uint16 remaining distance, decametres |
-| 11    | number of route points (0–`MAX_ROUTE_POINTS`, 20) |
-| 12…   | per point: int16 x, int16 y — centimetres, bike-relative, +Y ahead, +X right |
+| 11    | roundabout exit number, 1-based (0 = none) — v5 |
+| 12    | int8 turn angle ÷2°, +right / −left, ±180 = U-turn (−128 = unknown) — v5 |
+| 13    | roundabout ring length ÷2 m, entry to exit (0 = none) — v6 |
+| 14    | number of route points (0–`MAX_ROUTE_POINTS`, 20) |
+| 15…   | per point: int16 x, int16 y — centimetres, bike-relative, +Y ahead, +X right |
 | then  | uint8 landmark count (0–`MAX_LANDMARKS`, 5) |
 | then  | per landmark: int16 x, int16 y, uint8 type (`LandmarkType`) |
 | then  | uint8 branch count (0–`MAX_BRANCHES`, 6) |
 | then  | per branch: int16 x, int16 y, uint8 heading ÷2°, uint8 length ÷2 m |
 | then  | uint8 street name length, then that many UTF-8 bytes (max `MAX_STREET_NAME`, 22) |
 
-All little-endian. Worst case **178 bytes**, against the 182 usable at the negotiated
+All little-endian. Worst case **181 bytes**, against the 182 usable at the negotiated
 MTU of 185. Every variable-length block is length-prefixed and appears in a fixed order,
 which is what lets the parser validate the whole frame before touching `navState`.
 
@@ -182,7 +206,7 @@ Three things worth knowing:
    and must match the `Maneuver` and `Landmark.Type` enums in the app. Append at the end
    only. The app's `NavPacketTest` fails if an ordinal moves.
 2. **MTU matters.** The default ATT MTU of 23 bytes leaves 20 for the payload, well under
-   the 178-byte worst case. `NimBLEDevice::setMTU(185)` here plus the phone's request is
+   the 181-byte worst case. `NimBLEDevice::setMTU(185)` here plus the phone's request is
    what makes full frames possible.
 3. **Frames are validated before `navState` is touched.** A short or truncated write is
    dropped whole rather than half-applied, so the screen never mixes two frames.
